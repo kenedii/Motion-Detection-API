@@ -300,7 +300,7 @@ def overlay_detections_and_save_orb(video_path, template_path, output_video_path
 
 def overlay_dense_optical_flow_and_save(video_path, output_video_path=None, save=True):
     """
-    Compute dense optical flow using Farneback's algorithm, visualize it, and save the output video.
+    Compute dense optical flow using Farneback's algorithm, visualize it with speed, and save the output video.
     """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -326,28 +326,33 @@ def overlay_dense_optical_flow_and_save(video_path, output_video_path=None, save
         out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
 
     prev_gray = None
+    tracked_positions = []  # (frame_idx, x, y, speed)
+
     for frame_idx, frame in enumerate(stabilized_frames):
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         frame_out = frame.copy()
 
         if prev_gray is not None:
             flow = cv2.calcOpticalFlowFarneback(prev_gray, gray, None, 0.5, 3, 15, 3, 5, 1.2, 0)
-            # Visualize flow
+            mag, ang = cv2.cartToPolar(flow[..., 0], flow[..., 1])
             hsv = np.zeros((height, width, 3), dtype=np.uint8)
             hsv[..., 1] = 255
-            mag, ang = cv2.cartToPolar(flow[..., 0], flow[..., 1])
             hsv[..., 0] = ang * 180 / np.pi / 2
             hsv[..., 2] = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX)
             flow_bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
-            # Overlay on frame
-            alpha = 0.5
-            frame_out = cv2.addWeighted(frame, 1 - alpha, flow_bgr, alpha, 0)
+            
+            # Calculate average speed from magnitude
+            avg_speed = np.mean(mag)
+            tracked_positions.append((frame_idx, width//2, height//2, avg_speed))
+            
+            frame_out = cv2.addWeighted(frame, 0.5, flow_bgr, 0.5, 0)
+            cv2.putText(frame_out, f"Avg Speed: {avg_speed:.2f} px/frame", (10, 30),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
 
-        # Add timestamp
         timestamp = frame_idx / fps
         timestamp_str = f"Time: {timestamp:.2f}s"
         cv2.putText(frame_out, timestamp_str, (10, height - 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
 
         if out is not None:
             out.write(frame_out)
@@ -356,10 +361,12 @@ def overlay_dense_optical_flow_and_save(video_path, output_video_path=None, save
 
     if out is not None:
         out.release()
+    
+    return tracked_positions
 
 def overlay_sparse_optical_flow_and_save(video_path, output_video_path=None, save=True):
     """
-    Compute sparse optical flow using Lucas-Kanade algorithm, visualize tracked points, and save the output video.
+    Compute sparse optical flow using Lucas-Kanade algorithm, visualize tracked points with speed, and save the output video.
     """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -384,51 +391,46 @@ def overlay_sparse_optical_flow_and_save(video_path, output_video_path=None, sav
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
 
-    # Parameters for Shi-Tomasi corner detection
     feature_params = dict(maxCorners=100, qualityLevel=0.3, minDistance=7, blockSize=7)
-    # Parameters for Lucas-Kanade optical flow
     lk_params = dict(winSize=(15, 15), maxLevel=2,
-                     criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+                    criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
 
     prev_gray = cv2.cvtColor(stabilized_frames[0], cv2.COLOR_BGR2GRAY)
     prev_pts = cv2.goodFeaturesToTrack(prev_gray, mask=None, **feature_params)
-    mask = np.zeros_like(stabilized_frames[0])  # For drawing trails
+    mask = np.zeros_like(stabilized_frames[0])
+    tracked_positions = []  # (frame_idx, x, y, speed)
 
     for frame_idx, frame in enumerate(stabilized_frames):
         frame_out = frame.copy()
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         if prev_pts is not None:
-            # Calculate optical flow
             curr_pts, status, _ = cv2.calcOpticalFlowPyrLK(prev_gray, gray, prev_pts, None, **lk_params)
             if curr_pts is not None:
-                # Select good points
                 good_new = curr_pts[status == 1]
                 good_old = prev_pts[status == 1]
 
-                # Draw the tracks
                 for i, (new, old) in enumerate(zip(good_new, good_old)):
                     a, b = new.ravel()
                     c, d = old.ravel()
+                    speed = np.sqrt((a - c)**2 + (b - d)**2)
+                    tracked_positions.append((frame_idx, a, b, speed))
                     mask = cv2.line(mask, (int(a), int(b)), (int(c), int(d)), (0, 255, 0), 2)
                     frame_out = cv2.circle(frame_out, (int(a), int(b)), 5, (0, 0, 255), -1)
+                    cv2.putText(frame_out, f"{speed:.2f}", (int(a), int(b) - 10),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
 
-                # Overlay mask with trails
                 frame_out = cv2.add(frame_out, mask)
-
-                # Update previous points
                 prev_pts = good_new.reshape(-1, 1, 2)
             else:
                 prev_pts = None
         else:
-            # Re-detect features if lost
             prev_pts = cv2.goodFeaturesToTrack(gray, mask=None, **feature_params)
 
-        # Add timestamp
         timestamp = frame_idx / fps
         timestamp_str = f"Time: {timestamp:.2f}s"
         cv2.putText(frame_out, timestamp_str, (10, height - 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
 
         if out is not None:
             out.write(frame_out)
@@ -437,10 +439,12 @@ def overlay_sparse_optical_flow_and_save(video_path, output_video_path=None, sav
 
     if out is not None:
         out.release()
+    
+    return tracked_positions
 
 def overlay_background_subtraction_and_save(video_path, output_video_path=None, save=True):
     """
-    osteoporosisPerform background subtraction using the first frame as background, detect motion, and save the output video.
+    Perform background subtraction using the first frame as background, detect motion with speed, and save the output video.
     """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -469,6 +473,9 @@ def overlay_background_subtraction_and_save(video_path, output_video_path=None, 
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
 
+    tracked_positions = []  # (frame_idx, cx, cy, speed)
+    prev_centroids = {}
+
     for frame_idx, frame in enumerate(stabilized_frames):
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         gray = cv2.GaussianBlur(gray, (21, 21), 0)
@@ -477,25 +484,49 @@ def overlay_background_subtraction_and_save(video_path, output_video_path=None, 
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         thresh = cv2.dilate(thresh, kernel, iterations=2)
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
         frame_out = frame.copy()
-        for contour in contours:
+        curr_centroids = {}
+        
+        for i, contour in enumerate(contours):
             if cv2.contourArea(contour) > 500:
                 x, y, w, h = cv2.boundingRect(contour)
+                cx = x + w // 2
+                cy = y + h // 2
+                speed = 0.0
+                
+                if frame_idx > 0 and prev_centroids:
+                    min_dist = float('inf')
+                    for prev_id, (px, py) in prev_centroids.items():
+                        dist = np.sqrt((cx - px)**2 + (cy - py)**2)
+                        if dist < min_dist:
+                            min_dist = dist
+                            speed = dist
+                curr_centroids[i] = (cx, cy)
+                tracked_positions.append((frame_idx, cx, cy, speed))
+                
                 cv2.rectangle(frame_out, (x, y), (x + w, y + h), (0, 255, 0), 2)
-        # Add timestamp
+                cv2.putText(frame_out, f"Speed: {speed:.2f}", (x, y - 10),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
+
         timestamp = frame_idx / fps
         timestamp_str = f"Time: {timestamp:.2f}s"
         cv2.putText(frame_out, timestamp_str, (10, height - 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
+        
         if out is not None:
             out.write(frame_out)
+        
+        prev_centroids = curr_centroids
 
     if out is not None:
         out.release()
+    
+    return tracked_positions
 
 def overlay_frame_differencing_and_save(video_path, output_video_path=None, save=True):
     """
-    Perform frame differencing to detect motion and save the output video.
+    Perform frame differencing to detect motion with speed and save the output video.
     """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -521,33 +552,62 @@ def overlay_frame_differencing_and_save(video_path, output_video_path=None, save
         out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
 
     prev_gray = None
+    tracked_positions = []  # (frame_idx, cx, cy, speed)
+    prev_centroids = {}
+
     for frame_idx, frame in enumerate(stabilized_frames):
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         gray = cv2.GaussianBlur(gray, (21, 21), 0)
         frame_out = frame.copy()
+        
         if prev_gray is not None:
             diff = cv2.absdiff(prev_gray, gray)
             _, thresh = cv2.threshold(diff, 25, 255, cv2.THRESH_BINARY)
             kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
             thresh = cv2.dilate(thresh, kernel, iterations=2)
             contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            for contour in contours:
+            
+            curr_centroids = {}
+            for i, contour in enumerate(contours):
                 if cv2.contourArea(contour) > 500:
                     x, y, w, h = cv2.boundingRect(contour)
+                    cx = x + w // 2
+                    cy = y + h // 2
+                    speed = 0.0
+                    
+                    if prev_centroids:
+                        min_dist = float('inf')
+                        for prev_id, (px, py) in prev_centroids.items():
+                            dist = np.sqrt((cx - px)**2 + (cy - py)**2)
+                            if dist < min_dist:
+                                min_dist = dist
+                                speed = dist
+                    curr_centroids[i] = (cx, cy)
+                    tracked_positions.append((frame_idx, cx, cy, speed))
+                    
                     cv2.rectangle(frame_out, (x, y), (x + w, y + h), (0, 255, 0), 2)
-        # Add timestamp
+                    cv2.putText(frame_out, f"Speed: {speed:.2f}", (x, y - 10),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
+            
+            prev_centroids = curr_centroids
+
         timestamp = frame_idx / fps
         timestamp_str = f"Time: {timestamp:.2f}s"
         cv2.putText(frame_out, timestamp_str, (10, height - 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
+        
         if out is not None:
             out.write(frame_out)
+        
         prev_gray = gray
 
     if out is not None:
         out.release()
+    
+    return tracked_positions
 
 # Backward compatibility wrappers
 def track_object_in_video(video_path, object_image_path, output_video_path=None):
     tracked_positions, _, _ = overlay_detections_and_save_color(video_path, object_image_path, output_video_path, save=False)
     return tracked_positions
+
