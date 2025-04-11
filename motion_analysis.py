@@ -120,10 +120,16 @@ def stabilize_frames(frames):
 
     return stabilized_frames
 
-def overlay_detections_and_save_color(video_path, object_image_path, output_video_path=None, save=True):
+def overlay_detections_and_save_color(video_path, object_image_path,
+                                      output_video_path=None, save=True):
     """
-    Track the object in the video using color detection, overlay detections and timestamps, and optionally save.
-    Returns tracked positions and computed HSV bounds for debugging.
+    Track the object in the video using color detection, overlay per‑frame speed,
+    running average speed, timestamps, and (optionally) save the annotated video.
+
+    Returns
+    -------
+    tracked_positions : list  (frame_idx, cx, cy, speed)
+    lower_hsv, upper_hsv : list, list  – the HSV bounds actually used
     """
     lower_hsv, upper_hsv = compute_hsv_bounds(object_image_path)
 
@@ -131,10 +137,11 @@ def overlay_detections_and_save_color(video_path, object_image_path, output_vide
     if not cap.isOpened():
         raise FileNotFoundError(f"Video not found: {video_path}")
 
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    fps    = cap.get(cv2.CAP_PROP_FPS)
+    width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
+    # ── read all frames ──────────────────────────────────────────────────────────
     frames = []
     while True:
         ret, frame = cap.read()
@@ -145,52 +152,67 @@ def overlay_detections_and_save_color(video_path, object_image_path, output_vide
 
     stabilized_frames = stabilize_frames(frames)
 
+    # ── video writer (optional) ─────────────────────────────────────────────────
     out = None
     if save and output_video_path:
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
 
-    tracked_positions = []
-    prev_centroid = None
-    frame_idx = 0
+    tracked_positions = []        # (frame_idx, cx, cy, speed)
+    prev_centroid     = None
+    speed_history     = []        # collect non‑zero speeds for running average
 
-    for frame in stabilized_frames:
+    for frame_idx, frame in enumerate(stabilized_frames):
         bbox, centroid, mask = detect_object_by_color(frame, lower_hsv, upper_hsv)
         frame_out = frame.copy()
 
+        # ── timestamp overlay ───────────────────────────────────────────────────
         timestamp = frame_idx / fps
-        timestamp_str = f"Time: {timestamp:.2f}s"
-        cv2.putText(frame_out, timestamp_str, (10, height - 20),
+        cv2.putText(frame_out, f"Time: {timestamp:.2f}s", (10, height - 20),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
 
+        # ── object detected? ────────────────────────────────────────────────────
         if bbox is not None and centroid is not None:
-            x, y, w, h = bbox
-            cx, cy = centroid
+            (x, y, w, h) = bbox
+            (cx, cy)     = centroid
+
+            # speed (pixel displacement between successive centroids)
             speed = 0.0
             if prev_centroid is not None:
-                prev_cx, prev_cy = prev_centroid
-                displacement = np.sqrt((cx - prev_cx)**2 + (cy - prev_cy)**2)
-                speed = displacement
+                px, py = prev_centroid
+                speed  = np.hypot(cx - px, cy - py)
+
             tracked_positions.append((frame_idx, cx, cy, speed))
             prev_centroid = centroid
 
+            if speed > 0:
+                speed_history.append(speed)
+
+            # draw bbox / centroid / speed
             cv2.rectangle(frame_out, (x, y), (x + w, y + h), (0, 255, 0), 3)
             cv2.circle(frame_out, (cx, cy), 5, (0, 0, 255), -1)
-            cv2.putText(frame_out, f"Speed: {speed:.2f} px/frame", (x, y - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
+            cv2.putText(frame_out, f"Speed: {speed:.2f} px/frame",
+                        (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                        (0, 255, 0), 2, cv2.LINE_AA)
         else:
             cv2.putText(frame_out, "Object not detected", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2, cv2.LINE_AA)
 
+        # ── running average speed overlay ───────────────────────────────────────
+        avg_speed = np.mean(speed_history) if speed_history else 0.0
+        cv2.putText(frame_out, f"Avg Speed: {avg_speed:.2f} px/frame",
+                    (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                    (0, 255, 255), 2, cv2.LINE_AA)
+
+        # ── save / display ──────────────────────────────────────────────────────
         if out is not None:
             out.write(frame_out)
-
-        frame_idx += 1
 
     if out is not None:
         out.release()
 
     return tracked_positions, lower_hsv.tolist(), upper_hsv.tolist()
+
 
 def detect_object_by_orb(frame, template_path, orb, ratio_thresh=0.75, min_matches=10):
     """
