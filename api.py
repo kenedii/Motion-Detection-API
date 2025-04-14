@@ -1,4 +1,5 @@
 from fastapi import FastAPI, UploadFile, File
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from motion_analysis import (
     overlay_detections_and_save_color,
@@ -12,6 +13,13 @@ import tempfile
 import os
 import datetime
 import subprocess
+from face_detection import (
+    haar_cascade_face_detector,
+    dlib_facial_analysis
+)
+import numpy as np
+import cv2
+
 
 app = FastAPI()
 
@@ -261,3 +269,22 @@ async def detect_frame_differencing(video: UploadFile = File(...), image: Upload
         return {"output_video_url": output_video_url}
     finally:
         os.remove(temp_video_path)
+
+@app.post("/dlib_facial_analysis")
+async def dlib_facial_analysis_endpoint(file: UploadFile = File(...)):
+    """Apply Dlib Facial Analysis to the uploaded image."""
+    contents = await file.read()
+    img = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_COLOR)
+    result = dlib_facial_analysis(img)
+    _, encoded_img = cv2.imencode('.jpg', result)
+    return Response(content=encoded_img.tobytes(), media_type="image/jpeg")
+
+# Endpoints for single-image algorithms expecting color input
+@app.post("/haar_cascade_face_detector")
+async def haar_cascade_face_detector_endpoint(file: UploadFile = File(...)):
+    """Apply Haar Cascade Face Detector to the uploaded image."""
+    contents = await file.read()
+    img = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_COLOR)
+    result = haar_cascade_face_detector(img)
+    _, encoded_img = cv2.imencode('.jpg', result)
+    return Response(content=encoded_img.tobytes(), media_type="image/jpeg")
