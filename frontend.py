@@ -26,46 +26,21 @@ if task == "Face detection":
     face_method = st.radio("Select Face Detection Method", ["dlib", "haar cascade"])
     uploaded_video = st.file_uploader("Upload Video for Face Detection", type=["mp4", "avi", "mov"])
     if uploaded_video:
-        # Save to temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tfile:
-            tfile.write(uploaded_video.read())
-            video_path = tfile.name
-        
-        # Open video capture
-        cap = cv2.VideoCapture(video_path)
-        try:
-            if not cap.isOpened():
-                st.error("Error: Could not open video.")
+        st.write("**Video uploaded. Select a method above and click 'Process' to start face detection.**")
+        if st.button("Process"):
+            video_bytes = uploaded_video.read()
+            # Map method to API endpoint
+            url = f"{API_URL}/detect_faces_dlib_video" if face_method == "dlib" else f"{API_URL}/detect_faces_haar_video"
+            files = {'video': (uploaded_video.name, io.BytesIO(video_bytes), 'video/mp4')}
+            with st.spinner("Processing face detection..."):
+                response = requests.post(url, files=files)
+            if response.status_code == 200:
+                result = response.json()
+                output_video_url = API_URL + result["output_video_url"]
+                st.video(output_video_url)
+                st.success("Face detection completed.")
             else:
-                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                frame_number = st.slider("Select Frame for Face Detection", 0, total_frames - 1, 0)
-                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-                ret, frame = cap.read()
-                if ret:
-                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    st.image(frame_rgb, caption="Selected Frame", use_container_width=True)
-                    if st.button("Detect Faces"):
-                        # Convert frame to bytes for API
-                        _, encoded_frame = cv2.imencode('.jpg', frame)
-                        frame_bytes = encoded_frame.tobytes()
-                        url = f"{API_URL}/dlib_facial_analysis" if face_method == "dlib" else f"{API_URL}/haar_cascade_face_detector"
-                        files = {'file': ('frame.jpg', frame_bytes, 'image/jpeg')}
-                        with st.spinner("Detecting faces..."):
-                            response = requests.post(url, files=files)
-                        if response.status_code == 200:
-                            result_img = cv2.imdecode(np.frombuffer(response.content, np.uint8), cv2.IMREAD_COLOR)
-                            st.image(result_img, caption="Face Detection Result", use_container_width=True)
-                        else:
-                            st.error(f"Error in face detection: Status code {response.status_code}")
-                else:
-                    st.error("Error: Could not read frame.")
-        finally:
-            cap.release()
-        # Clean up
-        try:
-            os.remove(video_path)
-        except PermissionError as e:
-            st.warning(f"Could not delete temporary file: {e}")
+                st.error(f"Error processing the video: Status code {response.status_code}")
 
 # --- Motion Detection ---
 elif task == "Motion detection":
