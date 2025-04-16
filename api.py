@@ -19,9 +19,19 @@ from face_detection import (
 )
 import numpy as np
 import cv2
+from fastapi.middleware.cors import CORSMiddleware
 
 
 app = FastAPI()
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Update with Streamlit URL after deployment
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Ensure the 'detections' folder exists in the current directory
 DETECTIONS_DIR = os.path.join(os.getcwd(), "detections")
