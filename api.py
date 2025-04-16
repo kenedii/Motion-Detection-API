@@ -270,21 +270,128 @@ async def detect_frame_differencing(video: UploadFile = File(...), image: Upload
     finally:
         os.remove(temp_video_path)
 
-@app.post("/dlib_facial_analysis")
-async def dlib_facial_analysis_endpoint(file: UploadFile = File(...)):
-    """Apply Dlib Facial Analysis to the uploaded image."""
-    contents = await file.read()
-    img = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_COLOR)
-    result = dlib_facial_analysis(img)
-    _, encoded_img = cv2.imencode('.jpg', result)
-    return Response(content=encoded_img.tobytes(), media_type="image/jpeg")
+@app.post("/detect_faces_haar_video")
+async def detect_faces_haar_video(video: UploadFile = File(...)):
+    """Process a video with Haar Cascade face detection on each frame and return the output video URL."""
+    # Save uploaded video to a temporary file
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_video:
+        temp_video.write(await video.read())
+        temp_video_path = temp_video.name
 
-# Endpoints for single-image algorithms expecting color input
-@app.post("/haar_cascade_face_detector")
-async def haar_cascade_face_detector_endpoint(file: UploadFile = File(...)):
-    """Apply Haar Cascade Face Detector to the uploaded image."""
-    contents = await file.read()
-    img = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_COLOR)
-    result = haar_cascade_face_detector(img)
-    _, encoded_img = cv2.imencode('.jpg', result)
-    return Response(content=encoded_img.tobytes(), media_type="image/jpeg")
+    # Generate output filename with timestamp
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_video_filename = f"haar_faces_{timestamp}.mp4"
+    output_video_path = os.path.join(DETECTIONS_DIR, output_video_filename)
+    temp_output_path = output_video_path + ".tmp.mp4"  # Temporary file for OpenCV output
+
+    try:
+        # Open the video
+        cap = cv2.VideoCapture(temp_video_path)
+        if not cap.isOpened():
+            raise Exception("Could not open video")
+
+        # Get video properties
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        # Create VideoWriter for output
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(temp_output_path, fourcc, fps, (width, height))
+
+        # Process each frame
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            # Apply Haar Cascade face detection
+            processed_frame = haar_cascade_face_detector(frame)
+            out.write(processed_frame)
+
+        # Release resources
+        cap.release()
+        out.release()
+
+        # Convert to H.264/AAC MP4 using FFmpeg
+        subprocess.run([
+            "ffmpeg",
+            "-i", temp_output_path,
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-c:a", "aac",
+            "-movflags", "+faststart",
+            "-y",
+            output_video_path
+        ], check=True)
+
+        # Clean up temporary output
+        os.remove(temp_output_path)
+
+        output_video_url = f"/detections/{output_video_filename}"
+        return {"output_video_url": output_video_url}
+    finally:
+        # Clean up temporary input file
+        os.remove(temp_video_path)
+
+@app.post("/detect_faces_dlib_video")
+async def detect_faces_dlib_video(video: UploadFile = File(...)):
+    """Process a video with Dlib facial analysis on each frame and return the output video URL."""
+    # Save uploaded video to a temporary file
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_video:
+        temp_video.write(await video.read())
+        temp_video_path = temp_video.name
+
+    # Generate output filename with timestamp
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_video_filename = f"dlib_faces_{timestamp}.mp4"
+    output_video_path = os.path.join(DETECTIONS_DIR, output_video_filename)
+    temp_output_path = output_video_path + ".tmp.mp4"  # Temporary file for OpenCV output
+
+    try:
+        # Open the video
+        cap = cv2.VideoCapture(temp_video_path)
+        if not cap.isOpened():
+            raise Exception("Could not open video")
+
+        # Get video properties
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        # Create VideoWriter for output
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(temp_output_path, fourcc, fps, (width, height))
+
+        # Process each frame
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            # Apply Dlib facial analysis
+            processed_frame = dlib_facial_analysis(frame)
+            out.write(processed_frame)
+
+        # Release resources
+        cap.release()
+        out.release()
+
+        # Convert to H.264/AAC MP4 using FFmpeg
+        subprocess.run([
+            "ffmpeg",
+            "-i", temp_output_path,
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-c:a", "aac",
+            "-movflags", "+faststart",
+            "-y",
+            output_video_path
+        ], check=True)
+
+        # Clean up temporary output
+        os.remove(temp_output_path)
+
+        output_video_url = f"/detections/{output_video_filename}"
+        return {"output_video_url": output_video_url}
+    finally:
+        # Clean up temporary input file
+        os.remove(temp_video_path)
