@@ -7,5 +7,4 @@ streamlit
 plotly
 streamlit_plotly_events
 plotly.express
-bz2
 dlib
