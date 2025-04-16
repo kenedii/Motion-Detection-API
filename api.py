@@ -1,5 +1,5 @@
 from fastapi import FastAPI, UploadFile, File
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from motion_analysis import (
     overlay_detections_and_save_color,
@@ -272,7 +272,7 @@ async def detect_frame_differencing(video: UploadFile = File(...), image: Upload
 
 @app.post("/detect_faces_haar_video")
 async def detect_faces_haar_video(video: UploadFile = File(...)):
-    """Process a video with Haar Cascade face detection on each frame and return the output video URL."""
+    """Process a video with Haar Cascade face detection, stream it, and delete files."""
     # Save uploaded video to a temporary file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_video:
         temp_video.write(await video.read())
@@ -282,7 +282,7 @@ async def detect_faces_haar_video(video: UploadFile = File(...)):
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     output_video_filename = f"haar_faces_{timestamp}.mp4"
     output_video_path = os.path.join(DETECTIONS_DIR, output_video_filename)
-    temp_output_path = output_video_path + ".tmp.mp4"  # Temporary file for OpenCV output
+    temp_output_path = output_video_path + ".tmp.mp4"  # Temporary file for OpenCV
 
     try:
         # Open the video
@@ -304,7 +304,6 @@ async def detect_faces_haar_video(video: UploadFile = File(...)):
             ret, frame = cap.read()
             if not ret:
                 break
-            # Apply Haar Cascade face detection
             processed_frame = haar_cascade_face_detector(frame)
             out.write(processed_frame)
 
@@ -324,18 +323,38 @@ async def detect_faces_haar_video(video: UploadFile = File(...)):
             output_video_path
         ], check=True)
 
-        # Clean up temporary output
-        os.remove(temp_output_path)
+        # Read the output video into memory
+        with open(output_video_path, "rb") as video_file:
+            video_content = video_file.read()
 
-        output_video_url = f"/detections/{output_video_filename}"
-        return {"output_video_url": output_video_url}
-    finally:
-        # Clean up temporary input file
+        # Create a StreamingResponse to send the video
+        response = StreamingResponse(
+            content=iter([video_content]),
+            media_type="video/mp4",
+            headers={
+                "Content-Disposition": f"attachment; filename={output_video_filename}"
+            }
+        )
+
+        # Clean up files
+        os.remove(temp_output_path)
+        os.remove(output_video_path)
         os.remove(temp_video_path)
+
+        return response
+    except Exception as e:
+        # Ensure cleanup on error
+        if os.path.exists(temp_video_path):
+            os.remove(temp_video_path)
+        if os.path.exists(temp_output_path):
+            os.remove(temp_output_path)
+        if os.path.exists(output_video_path):
+            os.remove(output_video_path)
+        raise e
 
 @app.post("/detect_faces_dlib_video")
 async def detect_faces_dlib_video(video: UploadFile = File(...)):
-    """Process a video with Dlib facial analysis on each frame and return the output video URL."""
+    """Process a video with Dlib facial analysis, stream it, and delete files."""
     # Save uploaded video to a temporary file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_video:
         temp_video.write(await video.read())
@@ -345,7 +364,7 @@ async def detect_faces_dlib_video(video: UploadFile = File(...)):
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     output_video_filename = f"dlib_faces_{timestamp}.mp4"
     output_video_path = os.path.join(DETECTIONS_DIR, output_video_filename)
-    temp_output_path = output_video_path + ".tmp.mp4"  # Temporary file for OpenCV output
+    temp_output_path = output_video_path + ".tmp.mp4"  # Temporary file for OpenCV
 
     try:
         # Open the video
@@ -367,7 +386,6 @@ async def detect_faces_dlib_video(video: UploadFile = File(...)):
             ret, frame = cap.read()
             if not ret:
                 break
-            # Apply Dlib facial analysis
             processed_frame = dlib_facial_analysis(frame)
             out.write(processed_frame)
 
@@ -387,11 +405,31 @@ async def detect_faces_dlib_video(video: UploadFile = File(...)):
             output_video_path
         ], check=True)
 
-        # Clean up temporary output
-        os.remove(temp_output_path)
+        # Read the output video into memory
+        with open(output_video_path, "rb") as video_file:
+            video_content = video_file.read()
 
-        output_video_url = f"/detections/{output_video_filename}"
-        return {"output_video_url": output_video_url}
-    finally:
-        # Clean up temporary input file
+        # Create a StreamingResponse to send the video
+        response = StreamingResponse(
+            content=iter([video_content]),
+            media_type="video/mp4",
+            headers={
+                "Content-Disposition": f"attachment; filename={output_video_filename}"
+            }
+        )
+
+        # Clean up files
+        os.remove(temp_output_path)
+        os.remove(output_video_path)
         os.remove(temp_video_path)
+
+        return response
+    except Exception as e:
+        # Ensure cleanup on error
+        if os.path.exists(temp_video_path):
+            os.remove(temp_video_path)
+        if os.path.exists(temp_output_path):
+            os.remove(temp_output_path)
+        if os.path.exists(output_video_path):
+            os.remove(output_video_path)
+        raise e

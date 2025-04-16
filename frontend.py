@@ -35,9 +35,8 @@ if task == "Face detection":
             with st.spinner("Processing face detection..."):
                 response = requests.post(url, files=files)
             if response.status_code == 200:
-                result = response.json()
-                output_video_url = API_URL + result["output_video_url"]
-                st.video(output_video_url)
+                # Display the video directly from response content
+                st.video(response.content)
                 st.success("Face detection completed.")
             else:
                 st.error(f"Error processing the video: Status code {response.status_code}")
