@@ -1,4 +1,5 @@
 from fastapi import FastAPI, UploadFile, File
+from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from motion_analysis import (
     overlay_detections_and_save_color,
@@ -12,8 +13,25 @@ import tempfile
 import os
 import datetime
 import subprocess
+from face_detection import (
+    haar_cascade_face_detector,
+    dlib_facial_analysis
+)
+import numpy as np
+import cv2
+from fastapi.middleware.cors import CORSMiddleware
+
 
 app = FastAPI()
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Update with Streamlit URL after deployment
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Ensure the 'detections' folder exists in the current directory
 DETECTIONS_DIR = os.path.join(os.getcwd(), "detections")
@@ -261,3 +279,167 @@ async def detect_frame_differencing(video: UploadFile = File(...), image: Upload
         return {"output_video_url": output_video_url}
     finally:
         os.remove(temp_video_path)
+
+@app.post("/detect_faces_haar_video")
+async def detect_faces_haar_video(video: UploadFile = File(...)):
+    """Process a video with Haar Cascade face detection, stream it, and delete files."""
+    # Save uploaded video to a temporary file
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_video:
+        temp_video.write(await video.read())
+        temp_video_path = temp_video.name
+
+    # Generate output filename with timestamp
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_video_filename = f"haar_faces_{timestamp}.mp4"
+    output_video_path = os.path.join(DETECTIONS_DIR, output_video_filename)
+    temp_output_path = output_video_path + ".tmp.mp4"  # Temporary file for OpenCV
+
+    try:
+        # Open the video
+        cap = cv2.VideoCapture(temp_video_path)
+        if not cap.isOpened():
+            raise Exception("Could not open video")
+
+        # Get video properties
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        # Create VideoWriter for output
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(temp_output_path, fourcc, fps, (width, height))
+
+        # Process each frame
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            processed_frame = haar_cascade_face_detector(frame)
+            out.write(processed_frame)
+
+        # Release resources
+        cap.release()
+        out.release()
+
+        # Convert to H.264/AAC MP4 using FFmpeg
+        subprocess.run([
+            "ffmpeg",
+            "-i", temp_output_path,
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-c:a", "aac",
+            "-movflags", "+faststart",
+            "-y",
+            output_video_path
+        ], check=True)
+
+        # Read the output video into memory
+        with open(output_video_path, "rb") as video_file:
+            video_content = video_file.read()
+
+        # Create a StreamingResponse to send the video
+        response = StreamingResponse(
+            content=iter([video_content]),
+            media_type="video/mp4",
+            headers={
+                "Content-Disposition": f"attachment; filename={output_video_filename}"
+            }
+        )
+
+        # Clean up files
+        os.remove(temp_output_path)
+        os.remove(output_video_path)
+        os.remove(temp_video_path)
+
+        return response
+    except Exception as e:
+        # Ensure cleanup on error
+        if os.path.exists(temp_video_path):
+            os.remove(temp_video_path)
+        if os.path.exists(temp_output_path):
+            os.remove(temp_output_path)
+        if os.path.exists(output_video_path):
+            os.remove(output_video_path)
+        raise e
+
+@app.post("/detect_faces_dlib_video")
+async def detect_faces_dlib_video(video: UploadFile = File(...)):
+    """Process a video with Dlib facial analysis, stream it, and delete files."""
+    # Save uploaded video to a temporary file
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_video:
+        temp_video.write(await video.read())
+        temp_video_path = temp_video.name
+
+    # Generate output filename with timestamp
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_video_filename = f"dlib_faces_{timestamp}.mp4"
+    output_video_path = os.path.join(DETECTIONS_DIR, output_video_filename)
+    temp_output_path = output_video_path + ".tmp.mp4"  # Temporary file for OpenCV
+
+    try:
+        # Open the video
+        cap = cv2.VideoCapture(temp_video_path)
+        if not cap.isOpened():
+            raise Exception("Could not open video")
+
+        # Get video properties
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        # Create VideoWriter for output
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(temp_output_path, fourcc, fps, (width, height))
+
+        # Process each frame
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            processed_frame = dlib_facial_analysis(frame)
+            out.write(processed_frame)
+
+        # Release resources
+        cap.release()
+        out.release()
+
+        # Convert to H.264/AAC MP4 using FFmpeg
+        subprocess.run([
+            "ffmpeg",
+            "-i", temp_output_path,
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-c:a", "aac",
+            "-movflags", "+faststart",
+            "-y",
+            output_video_path
+        ], check=True)
+
+        # Read the output video into memory
+        with open(output_video_path, "rb") as video_file:
+            video_content = video_file.read()
+
+        # Create a StreamingResponse to send the video
+        response = StreamingResponse(
+            content=iter([video_content]),
+            media_type="video/mp4",
+            headers={
+                "Content-Disposition": f"attachment; filename={output_video_filename}"
+            }
+        )
+
+        # Clean up files
+        os.remove(temp_output_path)
+        os.remove(output_video_path)
+        os.remove(temp_video_path)
+
+        return response
+    except Exception as e:
+        # Ensure cleanup on error
+        if os.path.exists(temp_video_path):
+            os.remove(temp_video_path)
+        if os.path.exists(temp_output_path):
+            os.remove(temp_output_path)
+        if os.path.exists(output_video_path):
+            os.remove(output_video_path)
+        raise e
