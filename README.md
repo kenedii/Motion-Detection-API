@@ -24,4 +24,5 @@ Instructions to run:
 
 ![Frontend](https://cdn.discordapp.com/attachments/1090109948383481876/1362589453356371998/image.png?ex=6802f1d1&is=6801a051&hm=8967fae9409181a66e7b0c24abfd69ba5a3d7e37a9c0ebb2d068fe50cf61a3c9)
 
-[Demo](https://i.imgur.com/hD95vBF.gif)
+![hD95vBF](https://github.com/user-attachments/assets/fb148a49-2422-4e8e-9985-22398d0f912c)
+
