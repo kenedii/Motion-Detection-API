@@ -15,8 +15,8 @@ st.set_page_config(layout="wide")
 # App title
 st.title("Video Analysis App")
 
-# API base URL (assuming FastAPI is running locally on port 8888)
-API_URL = "http://localhost:8888"
+# API base URL 
+API_URL = "http://localhost:8080"
 
 # Task selection
 task = st.selectbox("Select Task", ["Face detection", "Object motion detection", "Motion detection"])
