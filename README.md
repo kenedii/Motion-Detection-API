@@ -3,5 +3,5 @@ Several functions for video Motion Detection built in Python using FastAPI, Open
 
 Instructions to run:
 - pip install -r requirements.txt
-- uvicorn api:app --reload --port=8888
+- uvicorn api:app --reload --port=8080
 - streamlit run frontend.py
