@@ -23,6 +23,11 @@ Dependencies:
 - FFMPEG (4.2.2 used)
 
 Instructions to run:
+
+Windows:
+- Double-click RunMotionDetection.bat
+
+Other:
 - pip install -r requirements.txt
 - uvicorn api:app --reload --port=8080
 - streamlit run frontend.py
