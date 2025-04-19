@@ -17,6 +17,11 @@ Motion detection (4)
 - Background Subtraction
 - Frame Differencing
 
+Dependencies:
+- Python (3.11.5 used)
+- Pip (23.2.1 used)
+- FFMPEG (4.2.2 used)
+
 Instructions to run:
 - pip install -r requirements.txt
 - uvicorn api:app --reload --port=8080
